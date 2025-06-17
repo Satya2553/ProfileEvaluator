@@ -3,3 +3,4 @@ openai==1.88.0
 pandas==2.2.3
 XlsxWriter==3.2.3
 openpyxl==3.1.5
+streamlit==1.44.1
