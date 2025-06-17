@@ -13,11 +13,197 @@ import xlsxwriter
 import math
 from collections import deque
 import re
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
 
 from requests import session
 from streamlit import header
 
 load_dotenv()
+
+def create_excel_output(df: pd.DataFrame, filename: str = "candidate_analysis_results.xlsx") -> bytes:
+    try:
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            df.to_excel(writer, sheet_name='Analysis Results', index=False)
+
+            workbook = writer.book
+            worksheet = writer.sheets['Analysis Results']
+
+            header_format = workbook.add_format({
+                'bold': True,
+                'text_wrap': True,
+                'valign': 'top',
+                'fg_color': '#D7E4BC',
+                'border': 1
+            })
+
+            for col_num, value in enumerate(df.columns.values):
+                worksheet.write(0, col_num, value, header_format)
+
+            for i, col in enumerate(df.columns):
+                max_len = 0
+                if not df[col].empty:
+                    max_len = max(df[col].astype(str).apply(len).max(), len(str(col)))
+                worksheet.set_column(i, i, min(max_len + 2, 50))
+
+        output.seek(0)
+        return output.getvalue()
+
+    except Exception as e:
+        st.error(f"Error creating Excel output: {str(e)}")
+        return b""
+
+def send_interview_emails(recipient_email: str, selected_candidates: pd.DataFrame, role: str) -> bool:
+    try:
+        # Get email credentials from environment variables
+        sender_email = os.getenv('EMAIL_USER')
+        sender_password = os.getenv('EMAIL_PASSWORD')
+        smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
+        smtp_port = int(os.getenv('SMTP_PORT', '587'))
+
+        if not all([sender_email, sender_password]):
+            st.error("Email credentials not configured. Please set EMAIL_USER and EMAIL_PASSWORD environment variables.")
+            return False
+
+        # Create message
+        msg = MIMEMultipart('alternative')
+        msg['From'] = sender_email
+        msg['To'] = recipient_email
+        msg['Subject'] = f"Interview Candidates for {role} Position"
+
+        # Create HTML table for candidates
+        html_table = selected_candidates.to_html(
+            index=False,
+            classes='table table-striped',
+            border=1,
+            justify='left',
+            na_rep='N/A'
+        )
+
+        # Create HTML email body with improved styling
+        html_body = f"""
+        <html>
+        <head>
+            <style>
+                body {{
+                    font-family: Arial, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    margin: 0;
+                    padding: 20px;
+                }}
+                .container {{
+                    max-width: 1000px;
+                    margin: 0 auto;
+                    padding: 20px;
+                    background-color: #ffffff;
+                }}
+                .header {{
+                    background-color: #f8f9fa;
+                    padding: 20px;
+                    border-radius: 5px;
+                    margin-bottom: 20px;
+                    border: 1px solid #e9ecef;
+                }}
+                .header h2 {{
+                    color: #2c3e50;
+                    margin: 0 0 10px 0;
+                }}
+                .table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin: 20px 0;
+                    font-size: 14px;
+                }}
+                .table th, .table td {{
+                    padding: 12px;
+                    border: 1px solid #dee2e6;
+                    text-align: left;
+                }}
+                .table th {{
+                    background-color: #f8f9fa;
+                    font-weight: bold;
+                    color: #2c3e50;
+                }}
+                .table tr:nth-child(even) {{
+                    background-color: #f8f9fa;
+                }}
+                .table tr:hover {{
+                    background-color: #f1f3f5;
+                }}
+                .score-cell {{
+                    font-weight: bold;
+                }}
+                .rank-cell {{
+                    font-weight: bold;
+                    color: #2c3e50;
+                }}
+                .remarks-cell {{
+                    font-style: italic;
+                    color: #495057;
+                }}
+                .footer {{
+                    margin-top: 30px;
+                    padding-top: 20px;
+                    border-top: 1px solid #dee2e6;
+                    font-size: 0.9em;
+                    color: #6c757d;
+                }}
+                .summary {{
+                    background-color: #e9ecef;
+                    padding: 15px;
+                    border-radius: 5px;
+                    margin: 20px 0;
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h2>Interview Candidates for {role} Position</h2>
+                    <p>Please find below the list of selected candidates for the {role} position.</p>
+                </div>
+                
+                <div class="summary">
+                    <p><strong>Total Candidates Selected:</strong> {len(selected_candidates)}</p>
+                    <p><strong>Score Range:</strong> {selected_candidates['score'].min():.1f} - {selected_candidates['score'].max():.1f}</p>
+                </div>
+                
+                {html_table}
+                
+                <div class="footer">
+                    <p>Best regards,<br>AI Candidate Analysis System</p>
+                    <p><small>This is an automated email. Please do not reply directly to this message.</small></p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        # Attach HTML content
+        msg.attach(MIMEText(html_body, 'html'))
+
+        # Create Excel attachment
+        excel_data = create_excel_output(selected_candidates)
+        if excel_data:
+            excel_attachment = MIMEApplication(excel_data, _subtype='xlsx')
+            excel_attachment.add_header('Content-Disposition', 'attachment', filename='selected_candidates.xlsx')
+            msg.attach(excel_attachment)
+
+        # Send email
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()
+            server.login(sender_email, sender_password)
+            server.send_message(msg)
+
+        return True
+
+    except Exception as e:
+        st.error(f"Failed to send email: {str(e)}")
+        return False
 
 class CandidateAnalysisSystem:
     def __init__(self):
@@ -433,39 +619,6 @@ Example format:
             original_df['remarks'] = "Error in analysis or merge"
             return original_df
 
-    def create_excel_output(self, df: pd.DataFrame, filename: str = "candidate_analysis_results.xlsx") -> bytes:
-        try:
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                df.to_excel(writer, sheet_name='Analysis Results', index=False)
-
-                workbook = writer.book
-                worksheet = writer.sheets['Analysis Results']
-
-                header_format = workbook.add_format({
-                    'bold': True,
-                    'text_wrap': True,
-                    'valign': 'top',
-                    'fg_color': '#D7E4BC',
-                    'border': 1
-                })
-
-                for col_num, value in enumerate(df.columns.values):
-                    worksheet.write(0, col_num, value, header_format)
-
-                for i, col in enumerate(df.columns):
-                    max_len = 0
-                    if not df[col].empty:
-                        max_len = max(df[col].astype(str).apply(len).max(), len(str(col)))
-                    worksheet.set_column(i, i, min(max_len + 2, 50))
-
-            output.seek(0)
-            return output.getvalue()
-
-        except Exception as e:
-            st.error(f"Error creating Excel output: {str(e)}")
-            return b""
-
 async def run_full_analysis_workflow(system, consolidated_df, role):
     st.session_state.analysis_in_progress = True
     st.session_state.ai_results = []
@@ -743,21 +896,7 @@ def main():
                 if st.session_state.ai_results:
                     st.success("Complete AI analysis finished!")
 
-                    min_score = st.number_input(
-                        "Minimum Score Filter:",
-                        min_value=0,
-                        max_value=500,
-                        value=None,
-                        placeholder="Enter minimum score to filter results (optional)",
-                        help="Only candidates with a score greater than or equal to this value will be displayed.",
-                        format="%d"
-                    )
-
                     ranked_df = st.session_state.final_df[st.session_state.final_df['rank'].notna()].copy()
-
-                    if min_score is not None:
-                        ranked_df = ranked_df[ranked_df['score'] >= min_score]
-
                     ranked_df['rank'] = ranked_df['rank'].astype(int)
 
                     if not ranked_df.empty:
@@ -768,6 +907,7 @@ def main():
                                          disabled=st.session_state.analysis_in_progress,key="Retry Batches"):
                                 asyncio.run(
                                     run_retry_workflow(system, st.session_state.consolidated_df, st.session_state.role_input))
+                        
                         st.subheader(" Complete Ranking Table")
                         display_columns = [col for col in ['rank', 'score', 'unique_id', 'remarks'] if
                                            col in ranked_df.columns] + \
@@ -779,9 +919,10 @@ def main():
                             use_container_width=True,
                             hide_index=True
                         )
+
                         st.subheader(" Download Results")
 
-                        excel_data = system.create_excel_output(st.session_state.final_df)
+                        excel_data = create_excel_output(st.session_state.final_df)
 
                         if excel_data:
                             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -794,8 +935,64 @@ def main():
                                 mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                             )
                             st.success("Your complete analysis report is ready for download!")
+
+                        # Add email functionality after download
+                        st.subheader("Send Interview Emails")
+                        st.info("Select a range of candidates to send interview emails.")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            email_min_score = st.number_input(
+                                "Minimum Score for Emails:",
+                                min_value=0,
+                                max_value=500,
+                                value=None,
+                                placeholder="Enter minimum score for email selection",
+                                help="Only candidates with a score greater than or equal to this value will be included in the email.",
+                                format="%d",
+                                key="email_min_score"
+                            )
+                        with col2:
+                            email_max_score = st.number_input(
+                                "Maximum Score for Emails:",
+                                min_value=0,
+                                max_value=500,
+                                value=None,
+                                placeholder="Enter maximum score for email selection",
+                                help="Only candidates with a score less than or equal to this value will be included in the email.",
+                                format="%d",
+                                key="email_max_score"
+                            )
+
+                        # Filter candidates for email based on score range
+                        email_candidates = ranked_df.copy()
+                        if email_min_score is not None:
+                            email_candidates = email_candidates[email_candidates['score'] >= email_min_score]
+                        if email_max_score is not None:
+                            email_candidates = email_candidates[email_candidates['score'] <= email_max_score]
+
+                        if not email_candidates.empty:
+                            st.info(f"Selected {len(email_candidates)} candidates for email.")
+                            st.dataframe(
+                                email_candidates[display_columns],
+                                use_container_width=True,
+                                hide_index=True
+                            )
+
+                            recipient_email = st.text_input(
+                                "Recipient Email:",
+                                placeholder="Enter email address to send selected candidates",
+                                help="The email address where the selected candidates will be sent."
+                            )
+
+                            if recipient_email:
+                                if st.button("Send Interview Emails", type="primary"):
+                                    if send_interview_emails(recipient_email, email_candidates, st.session_state.role_input):
+                                        st.success(f"Email sent successfully to {recipient_email}")
+                                    else:
+                                        st.error("Failed to send email. Please check the email configuration.")
                         else:
-                            st.warning("No candidates were successfully ranked by the AI. Please check the API key and data format.")
+                            st.warning("No candidates match the selected score range for email.")
                     else:
                         st.error(
                             "AI analysis failed or returned no results. Please check your API key, role input, and data consistency.")
