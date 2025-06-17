@@ -1,5 +1,5 @@
-numpy==2.2.5
-openai==1.88.0
-pandas==2.2.3
-XlsxWriter==3.2.3
-openpyxl==3.1.5
+numpy=2.2.5
+openai=1.88.0
+pandas=2.2.3
+XlsxWriter=3.2.3
+openpyxl=3.1.5
