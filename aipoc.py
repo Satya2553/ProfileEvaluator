@@ -58,7 +58,6 @@ def create_excel_output(df: pd.DataFrame, filename: str = "candidate_analysis_re
 
 def send_interview_emails(recipient_email: str, selected_candidates: pd.DataFrame, role: str) -> bool:
     try:
-        # Get email credentials from environment variables
         sender_email = os.getenv('EMAIL_USER')
         sender_password = os.getenv('EMAIL_PASSWORD')
         smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
@@ -68,13 +67,11 @@ def send_interview_emails(recipient_email: str, selected_candidates: pd.DataFram
             st.error("Email credentials not configured. Please set EMAIL_USER and EMAIL_PASSWORD environment variables.")
             return False
 
-        # Create message
         msg = MIMEMultipart('alternative')
         msg['From'] = sender_email
         msg['To'] = recipient_email
         msg['Subject'] = f"Interview Candidates for {role} Position"
 
-        # Create HTML table for candidates
         html_table = selected_candidates.to_html(
             index=False,
             classes='table table-striped',
@@ -83,7 +80,6 @@ def send_interview_emails(recipient_email: str, selected_candidates: pd.DataFram
             na_rep='N/A'
         )
 
-        # Create HTML email body with improved styling
         html_body = f"""
         <html>
         <head>
@@ -183,17 +179,14 @@ def send_interview_emails(recipient_email: str, selected_candidates: pd.DataFram
         </html>
         """
 
-        # Attach HTML content
         msg.attach(MIMEText(html_body, 'html'))
 
-        # Create Excel attachment
         excel_data = create_excel_output(selected_candidates)
         if excel_data:
             excel_attachment = MIMEApplication(excel_data, _subtype='xlsx')
             excel_attachment.add_header('Content-Disposition', 'attachment', filename='selected_candidates.xlsx')
             msg.attach(excel_attachment)
 
-        # Send email
         with smtplib.SMTP(smtp_server, smtp_port) as server:
             server.starttls()
             server.login(sender_email, sender_password)
@@ -936,7 +929,6 @@ def main():
                             )
                             st.success("Your complete analysis report is ready for download!")
 
-                        # Add email functionality after download
                         st.subheader("Send Interview Emails")
                         st.info("Select a range of candidates to send interview emails.")
                         
@@ -964,7 +956,6 @@ def main():
                                 key="email_max_score"
                             )
 
-                        # Filter candidates for email based on score range
                         email_candidates = ranked_df.copy()
                         if email_min_score is not None:
                             email_candidates = email_candidates[email_candidates['score'] >= email_min_score]
